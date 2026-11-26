@@ -45,18 +45,23 @@ jobs:
           if (-not $versionMatch.Success) { throw "无法读取安装包版本号" }
           $tag = "v" + $versionMatch.Groups[1].Value
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
-          $probeExitCode = $LASTEXITCODE
-          if ($probeExitCode -eq 0) {
-            $release = ($existing -join "`n") | ConvertFrom-Json
-            if ($release.draft) { throw "已存在 $tag 草稿，请先检查该草稿，再重新运行工作流" }
+          $releaseJson = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+          if ($LASTEXITCODE -ne 0) { throw "查询 Release 列表失败" }
+          $pages = ConvertFrom-Json -InputObject ($releaseJson -join "`n") -NoEnumerate
+          $matching = @(foreach ($page in $pages) { foreach ($item in $page) { if ($item.tag_name -eq $tag) { $item } } })
+          if ($matching.Count -gt 1) { throw "同版本存在多个发布记录，请先检查" }
+          if ($matching.Count -eq 1 -and -not $matching[0].draft) {
             "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
             Write-Output "$tag 已发布，保留现有附件，不重复发布。"
-          } elseif (($existing -join "`n") -match 'HTTP 404') {
-            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            $global:LASTEXITCODE = 0
           } else {
-            throw "查询 Release 失败：$existing"
+            if ($matching.Count -eq 1) {
+              $draft = $matching[0]
+              if ($draft.author.login -ne "github-actions[bot]" -or $draft.name -ne "粉白桌宠 $tag" -or $draft.body -notmatch '本版本由 GitHub Actions 从对应提交构建') {
+                throw "同版本草稿不是本工作流创建的，请先检查草稿"
+              }
+              "draft_id=$($draft.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            }
+            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
 
       - name: Set up Python
@@ -101,7 +106,9 @@ jobs:
           $executable = (Resolve-Path -LiteralPath "dist/粉白桌宠.exe").Path
           $checkProcess = Start-Process -FilePath $executable -ArgumentList "--check" -WindowStyle Hidden -Wait -PassThru
           if ($checkProcess.ExitCode -ne 0) { throw "打包后的资源自检失败" }
-          $checksumLines = foreach ($name in @("粉白桌宠.exe", "粉白桌宠安装包.exe")) {
+          Copy-Item -LiteralPath "dist/粉白桌宠.exe" -Destination "dist/pink-white-desktop-pet.exe"
+          Copy-Item -LiteralPath "dist/粉白桌宠安装包.exe" -Destination "dist/pink-white-desktop-pet-setup.exe"
+          $checksumLines = foreach ($name in @("pink-white-desktop-pet.exe", "pink-white-desktop-pet-setup.exe")) {
             $hash = (Get-FileHash -LiteralPath "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $name"
           }
@@ -112,6 +119,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          DRAFT_RELEASE_ID: ${{ steps.version.outputs.draft_id }}
         run: |
           $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
           $ErrorActionPreference = "Stop"
@@ -119,8 +127,8 @@ jobs:
           我的第一个 Vibe Coding 作品：粉白桌宠。
 
           ## 下载与使用
-          - 粉白桌宠.exe：便携版，下载后双击运行，无需安装 Python。
-          - 粉白桌宠安装包.exe：安装版，提供快捷方式与卸载程序。
+          - pink-white-desktop-pet.exe：便携版，下载后双击运行，无需安装 Python。
+          - pink-white-desktop-pet-setup.exe：安装版，提供快捷方式与卸载程序。
           - SHA256SUMS.txt：两个安装文件的 SHA-256 校验值。
 
           ## 功能
@@ -133,17 +141,47 @@ jobs:
           面向 Windows x64 兼容环境；资源自检不代替真实桌面交互、安装与卸载验收。
           '@
           [IO.File]::WriteAllText("dist/RELEASE_NOTES.md", $notes, [Text.UTF8Encoding]::new($false))
-          gh release create $env:RELEASE_TAG "dist/粉白桌宠.exe" "dist/粉白桌宠安装包.exe" "dist/SHA256SUMS.txt" --target $env:GITHUB_SHA --title "粉白桌宠 $env:RELEASE_TAG" --notes-file "dist/RELEASE_NOTES.md" --draft
-          if ($LASTEXITCODE -ne 0) { throw "创建发布草稿或上传附件失败" }
-          $draftJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG"
+          if ($env:DRAFT_RELEASE_ID) {
+            $draftId = [long]$env:DRAFT_RELEASE_ID
+            $draftJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/$draftId"
+            if ($LASTEXITCODE -ne 0) { throw "读取待恢复草稿失败" }
+            $existingDraft = ($draftJson -join "`n") | ConvertFrom-Json
+            if (-not $existingDraft.draft -or $existingDraft.author.login -ne "github-actions[bot]" -or $existingDraft.tag_name -ne $env:RELEASE_TAG -or $existingDraft.body -notmatch '本版本由 GitHub Actions 从对应提交构建') {
+              throw "草稿状态已变化，停止恢复"
+            }
+            gh release edit $env:RELEASE_TAG --target $env:GITHUB_SHA --title "粉白桌宠 $env:RELEASE_TAG" --notes-file "dist/RELEASE_NOTES.md"
+            if ($LASTEXITCODE -ne 0) { throw "更新发布草稿失败" }
+          } else {
+            gh release create $env:RELEASE_TAG --target $env:GITHUB_SHA --title "粉白桌宠 $env:RELEASE_TAG" --notes-file "dist/RELEASE_NOTES.md" --draft
+            if ($LASTEXITCODE -ne 0) { throw "创建发布草稿失败" }
+            $allReleases = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { throw "查询新建草稿失败" }
+            $pages = ConvertFrom-Json -InputObject ($allReleases -join "`n") -NoEnumerate
+            $created = @(foreach ($page in $pages) { foreach ($item in $page) { if ($item.tag_name -eq $env:RELEASE_TAG -and $item.draft) { $item } } })
+            if ($created.Count -ne 1) { throw "无法唯一确定新建草稿" }
+            $draftId = [long]$created[0].id
+          }
+          gh release upload $env:RELEASE_TAG "dist/pink-white-desktop-pet.exe" "dist/pink-white-desktop-pet-setup.exe" "dist/SHA256SUMS.txt" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "上传发布附件失败，保留草稿供重试" }
+          $draftJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/$draftId"
           if ($LASTEXITCODE -ne 0) { throw "读取发布草稿失败" }
           $draft = ($draftJson -join "`n") | ConvertFrom-Json
-          foreach ($name in @("粉白桌宠.exe", "粉白桌宠安装包.exe", "SHA256SUMS.txt")) {
+          foreach ($legacyAsset in @($draft.assets | Where-Object { $_.name -eq "default.exe" })) {
+            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/assets/$($legacyAsset.id)"
+            if ($LASTEXITCODE -ne 0) { throw "清理本工作流产生的无效草稿附件失败" }
+          }
+          $draftJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/$draftId"
+          if ($LASTEXITCODE -ne 0) { throw "重新读取发布草稿失败" }
+          $draft = ($draftJson -join "`n") | ConvertFrom-Json
+          if (-not $draft.draft -or $draft.assets.Count -ne 3) { throw "草稿状态或附件数量异常，停止发布" }
+          foreach ($name in @("pink-white-desktop-pet.exe", "pink-white-desktop-pet-setup.exe", "SHA256SUMS.txt")) {
             $asset = @($draft.assets | Where-Object { $_.name -eq $name })
             $localSize = (Get-Item -LiteralPath "dist/$name").Length
             if ($asset.Count -ne 1 -or $asset[0].state -ne "uploaded" -or $asset[0].size -ne $localSize) {
               throw "发布附件校验失败：$name；保留草稿供检查"
             }
+            $expectedDigest = "sha256:" + (Get-FileHash -LiteralPath "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($asset[0].digest -and $asset[0].digest -ne $expectedDigest) { throw "发布附件摘要不一致：$name" }
           }
           gh release edit $env:RELEASE_TAG --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "公开发布失败，草稿已保留" }
