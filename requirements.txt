@@ -1,0 +1,4 @@
+Pillow>=12.3,<13
+pystray>=0.19,<0.20
+pyinstaller>=6.21,<7
+
