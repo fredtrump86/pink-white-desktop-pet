@@ -22,12 +22,12 @@
 
 面向 Windows 用户，现有安装包按 x64 兼容环境配置；macOS 和 Linux 不在当前支持范围内。
 
-请从仓库的 [Releases 页面](https://github.com/fredtrump86/pink-white-desktop-pet/releases)下载以下任一文件。首次自动构建完成后会生成下载附件；构建进度可在 Actions 页面查看。
+当前已发布 **v0.2.0**。点击下方链接可下载最新版本，也可以在 [Releases 页面](https://github.com/fredtrump86/pink-white-desktop-pet/releases)查看版本说明与校验文件。
 
 | 文件 | 使用方式 |
 | --- | --- |
-| `pink-white-desktop-pet.exe` | 便携版，下载后双击运行 |
-| `pink-white-desktop-pet-setup.exe` | 安装版，提供开始菜单、可选桌面快捷方式和卸载程序 |
+| [下载便携版 · pink-white-desktop-pet.exe](https://github.com/fredtrump86/pink-white-desktop-pet/releases/latest/download/pink-white-desktop-pet.exe) | 下载后双击运行 |
+| [下载安装包 · pink-white-desktop-pet-setup.exe](https://github.com/fredtrump86/pink-white-desktop-pet/releases/latest/download/pink-white-desktop-pet-setup.exe) | 提供开始菜单、可选桌面快捷方式和卸载程序 |
 
 两种版本均已打包运行所需的 Python 环境、依赖和角色素材，不需要另行下载图片。安装版默认安装到当前用户的本地应用目录，不要求管理员权限。
 
@@ -193,7 +193,7 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 - 在 `main` 分支修改发布工作流或 `installer.iss` 时自动触发；也可以在 Actions 页面选择工作流并点击 **Run workflow** 手动执行。
 - 版本号读取自 `installer.iss` 的 `MyAppVersion`，对应标签为 `v版本号`。发布新版时先更新该版本号。
 - 同版本已公开发布时跳过构建，保留已有附件；本工作流创建的同版本草稿可在失败后重新构建并恢复，其他草稿会停止并提示检查。
-- 两个 EXE 和 `SHA256SUMS.txt` 先上传到发布草稿，确认附件名称、状态与大小均正确后再公开发布。
+- 两个 EXE 和 `SHA256SUMS.txt` 先上传到发布草稿，确认附件名称、状态、大小和可用的 SHA-256 摘要均正确后再公开发布。
 - Release 使用英文附件名避免中文名称在上传时冲突；本地构建仍保留中文 EXE 名称。
 - 自动检查不代替真实桌面交互及安装、卸载验收。
 
@@ -221,4 +221,4 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 5. 发布后更新本文顶部的发布状态，并补上实际 Release 下载链接。
 6. 在没有 Python 开发环境的 Windows 电脑上验证下载、运行、安装与卸载，记录验证结果。
 
-当前尚未附项目级开源许可证；发布前需由项目作者选定，并补充角色参考图和素材的来源与授权说明。安装器语言文件自带的许可说明单独保留。
+当前尚未附项目级开源许可证，许可证及角色参考图、素材的来源与授权说明待项目作者补充。安装器语言文件自带的许可说明单独保留。
