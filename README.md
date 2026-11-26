@@ -2,7 +2,9 @@
 
 我的第一个 Vibe Coding 作品：一款以 AI 辅助编码完成的 Windows Q 版桌宠，让角色通过鼠标互动、随机动作和对话气泡，提供轻量的桌面陪伴。
 
-应用在本地运行，无需部署服务器；打包版无需安装 Python。目前已有便携版和安装包，尚待发布到 GitHub Releases。
+应用在本地运行，无需部署服务器；打包版无需安装 Python。
+
+[项目源码](https://github.com/fredtrump86/pink-white-desktop-pet) · [版本与下载](https://github.com/fredtrump86/pink-white-desktop-pet/releases) · [自动构建进度](https://github.com/fredtrump86/pink-white-desktop-pet/actions)
 
 ## 运行效果
 
@@ -20,7 +22,7 @@
 
 面向 Windows 用户，现有安装包按 x64 兼容环境配置；macOS 和 Linux 不在当前支持范围内。
 
-发布后，请从仓库的 **Releases** 页面下载以下任一文件：
+请从仓库的 [Releases 页面](https://github.com/fredtrump86/pink-white-desktop-pet/releases)下载以下任一文件。首次自动构建完成后会生成下载附件；构建进度可在 Actions 页面查看。
 
 | 文件 | 使用方式 |
 | --- | --- |
@@ -122,6 +124,7 @@ desktop_pet.spec               PyInstaller 打包配置
 installer.iss                  Inno Setup 安装配置
 build.ps1                      构建脚本
 requirements.txt               Python 依赖
+.github/workflows/release.yml   Windows 自动测试、打包与发布
 ```
 
 `.venv/`、`build/` 和 `dist/` 是本地产物，不提交到源码仓库。运行配置默认存储在 `%LOCALAPPDATA%/粉白桌宠/settings.json`，运行异常日志位于同目录下的 `runtime.log`。
@@ -182,6 +185,16 @@ $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 - `dist/粉白桌宠安装包.exe`：可直接发送给朋友的标准 Windows 安装包
 
 构建脚本会先执行资源自检并重新生成图标，再构建 EXE。完整单元测试需按上节单独执行。
+
+### GitHub 自动发布
+
+仓库提供 `.github/workflows/release.yml`，在 Windows 运行器上完成依赖安装、单元测试、EXE 与安装包构建，以及打包后的资源自检。
+
+- 在 `main` 分支修改发布工作流或 `installer.iss` 时自动触发；也可以在 Actions 页面选择工作流并点击 **Run workflow** 手动执行。
+- 版本号读取自 `installer.iss` 的 `MyAppVersion`，对应标签为 `v版本号`。发布新版时先更新该版本号。
+- 同版本已公开发布时跳过构建，保留已有附件；如果已有同版本草稿，则停止并提示检查草稿。
+- 两个 EXE 和 `SHA256SUMS.txt` 先上传到发布草稿，确认附件名称、状态与大小均正确后再公开发布。
+- 自动检查不代替真实桌面交互及安装、卸载验收。
 
 ## 替换人物形象
 

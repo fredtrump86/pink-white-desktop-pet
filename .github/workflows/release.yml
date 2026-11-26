@@ -1,0 +1,148 @@
+name: Build and release Windows desktop pet
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - installer.iss
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Read version and check existing release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $ErrorActionPreference = "Stop"
+          $scriptText = [IO.File]::ReadAllText("installer.iss", [Text.Encoding]::UTF8)
+          $versionMatch = [regex]::Match($scriptText, '#define MyAppVersion "([0-9]+\.[0-9]+\.[0-9]+)"')
+          if (-not $versionMatch.Success) { throw "无法读取安装包版本号" }
+          $tag = "v" + $versionMatch.Groups[1].Value
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
+          $probeExitCode = $LASTEXITCODE
+          if ($probeExitCode -eq 0) {
+            $release = ($existing -join "`n") | ConvertFrom-Json
+            if ($release.draft) { throw "已存在 $tag 草稿，请先检查该草稿，再重新运行工作流" }
+            "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Output "$tag 已发布，保留现有附件，不重复发布。"
+          } elseif (($existing -join "`n") -match 'HTTP 404') {
+            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            throw "查询 Release 失败：$existing"
+          }
+
+      - name: Set up Python
+        if: steps.version.outputs.exists == 'false'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Install dependencies
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $ErrorActionPreference = "Stop"
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "创建虚拟环境失败" }
+          & ".venv/Scripts/python.exe" -m pip install -r "requirements.txt"
+          if ($LASTEXITCODE -ne 0) { throw "安装依赖失败" }
+
+      - name: Run unit tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          & ".venv/Scripts/python.exe" -B -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw "单元测试失败" }
+
+      - name: Build portable executable and installer
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $ErrorActionPreference = "Stop"
+          & "./build.ps1"
+          foreach ($name in @("粉白桌宠.exe", "粉白桌宠安装包.exe")) {
+            if (-not (Test-Path -LiteralPath "dist/$name")) { throw "缺少构建产物：$name" }
+          }
+
+      - name: Check packaged resources and generate checksums
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $ErrorActionPreference = "Stop"
+          $executable = (Resolve-Path -LiteralPath "dist/粉白桌宠.exe").Path
+          $checkProcess = Start-Process -FilePath $executable -ArgumentList "--check" -WindowStyle Hidden -Wait -PassThru
+          if ($checkProcess.ExitCode -ne 0) { throw "打包后的资源自检失败" }
+          $checksumLines = foreach ($name in @("粉白桌宠.exe", "粉白桌宠安装包.exe")) {
+            $hash = (Get-FileHash -LiteralPath "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllLines("dist/SHA256SUMS.txt", [string[]]$checksumLines, [Text.UTF8Encoding]::new($false))
+
+      - name: Upload and publish release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $ErrorActionPreference = "Stop"
+          $notes = @'
+          我的第一个 Vibe Coding 作品：粉白桌宠。
+
+          ## 下载与使用
+          - 粉白桌宠.exe：便携版，下载后双击运行，无需安装 Python。
+          - 粉白桌宠安装包.exe：安装版，提供快捷方式与卸载程序。
+          - SHA256SUMS.txt：两个安装文件的 SHA-256 校验值。
+
+          ## 功能
+          - 透明置顶、拖动与位置记忆、系统托盘及尺寸调整。
+          - 点击、双击和悬停互动，11 种角色状态及对话气泡。
+          - 带随机等待和长时间未互动休息规则的自动动作。
+
+          ## 验证范围
+          本版本由 GitHub Actions 从对应提交构建，发布前执行单元测试、源码资源自检和打包后的资源自检。
+          面向 Windows x64 兼容环境；资源自检不代替真实桌面交互、安装与卸载验收。
+          '@
+          [IO.File]::WriteAllText("dist/RELEASE_NOTES.md", $notes, [Text.UTF8Encoding]::new($false))
+          gh release create $env:RELEASE_TAG "dist/粉白桌宠.exe" "dist/粉白桌宠安装包.exe" "dist/SHA256SUMS.txt" --target $env:GITHUB_SHA --title "粉白桌宠 $env:RELEASE_TAG" --notes-file "dist/RELEASE_NOTES.md" --draft
+          if ($LASTEXITCODE -ne 0) { throw "创建发布草稿或上传附件失败" }
+          $draftJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "读取发布草稿失败" }
+          $draft = ($draftJson -join "`n") | ConvertFrom-Json
+          foreach ($name in @("粉白桌宠.exe", "粉白桌宠安装包.exe", "SHA256SUMS.txt")) {
+            $asset = @($draft.assets | Where-Object { $_.name -eq $name })
+            $localSize = (Get-Item -LiteralPath "dist/$name").Length
+            if ($asset.Count -ne 1 -or $asset[0].state -ne "uploaded" -or $asset[0].size -ne $localSize) {
+              throw "发布附件校验失败：$name；保留草稿供检查"
+            }
+          }
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "公开发布失败，草稿已保留" }
