@@ -54,6 +54,7 @@ jobs:
             Write-Output "$tag 已发布，保留现有附件，不重复发布。"
           } elseif (($existing -join "`n") -match 'HTTP 404') {
             "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            $global:LASTEXITCODE = 0
           } else {
             throw "查询 Release 失败：$existing"
           }
